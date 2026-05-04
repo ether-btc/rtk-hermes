@@ -1,0 +1,23 @@
+# Runtime dependencies
+dependencies:
+  - python>=3.9
+
+# Build dependencies
+build_dependencies:
+  - setuptools>=68.0
+  - wheel
+
+# Development dependencies
+dev_dependencies:
+  - pytest>=7.0
+  - pytest-cov>=4.0
+  - ruff>=0.1.0
+  - mypy>=1.0
+
+# Optional dependencies
+extras:
+  dev:
+    - pytest>=7.0
+    - pytest-cov>=4.0
+    - ruff>=0.1.0
+    - mypy>=1.0
