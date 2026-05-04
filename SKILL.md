@@ -1,3 +1,9 @@
+---
+name: rtk-hermes
+description: RTK token optimization plugin for Hermes Agent — achieves 60-90% LLM token savings on terminal command output
+tags: [rtk, token-optimization, hermes-plugin, python, terminal]
+---
+
 # RTK Hermes Plugin
 
 ## Skill Identity
