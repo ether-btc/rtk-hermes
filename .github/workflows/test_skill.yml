@@ -1,0 +1,43 @@
+name: Test Skill
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check SKILL.md exists
+        run: test -f SKILL.md && echo "SKILL.md found"
+
+      - name: Check deps.yaml exists
+        run: test -f deps.yaml && echo "deps.yaml found"
+
+      - name: Validate frontmatter structure
+        run: |
+          if ! head -20 SKILL.md | grep -q "^---"; then
+            echo "Error: SKILL.md missing frontmatter"
+            exit 1
+          fi
+          if ! grep -q "^name:" < <(head -20 SKILL.md); then
+            echo "Error: frontmatter missing 'name'"
+            exit 1
+          fi
+          if ! grep -q "^description:" < <(head -20 SKILL.md); then
+            echo "Error: frontmatter missing 'description'"
+            exit 1
+          fi
+          echo "Frontmatter structure OK"
+
+      - name: Validate deps.yaml
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('deps.yaml'))"
+          echo "deps.yaml YAML valid"
+
+      - name: List skill structure
+        run: find . -type f -not -path './.git/*' | sort
