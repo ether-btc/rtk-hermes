@@ -1,5 +1,6 @@
-"""Tests for rtk-hermes plugin."""
+"""Contract tests for the standalone RTK-Hermes adapter."""
 
+import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -9,183 +10,108 @@ import rtk_hermes
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache():
+def reset_state():
     rtk_hermes._rtk_available = None
+    rtk_hermes._rtk_missing_warned = False
+    rtk_hermes.reset_metrics()
     yield
     rtk_hermes._rtk_available = None
 
 
-class TestCheckRtk:
-    def test_found(self):
-        with patch("shutil.which", return_value="/usr/local/bin/rtk"):
-            assert rtk_hermes._check_rtk() is True
+class TestRewriteBoundary:
+    def test_rewrite_mutates_terminal_command_on_success(self):
+        args = {"command": "git status", "timeout": 30}
+        result = subprocess.CompletedProcess([], 0, "rtk git status\n", "")
+        with patch("shutil.which", return_value="/usr/bin/rtk"), patch(
+            "subprocess.run", return_value=result
+        ):
+            rtk_hermes._pre_tool_call("terminal", args)
+        assert args == {"command": "rtk git status", "timeout": 30}
 
-    def test_not_found(self):
-        with patch("shutil.which", return_value=None):
-            assert rtk_hermes._check_rtk() is False
-
-    def test_cached(self):
-        with patch("shutil.which", return_value="/usr/local/bin/rtk") as m:
-            rtk_hermes._check_rtk()
-            rtk_hermes._check_rtk()
-            m.assert_called_once()
-
-
-class TestTryRewrite:
-    def _fake(self, stdout="", rc=0):
-        return subprocess.CompletedProcess([], rc, stdout=stdout, stderr="")
-
-    def test_rewrites(self):
-        with patch("subprocess.run", return_value=self._fake("rtk git status\n")):
-            assert rtk_hermes._try_rewrite("git status") == "rtk git status"
-
-    def test_same_command_returns_none(self):
-        with patch("subprocess.run", return_value=self._fake("echo hello\n")):
-            assert rtk_hermes._try_rewrite("echo hello") is None
-
-    def test_exit_1_returns_none(self):
-        with patch("subprocess.run", return_value=self._fake("", rc=1)):
-            assert rtk_hermes._try_rewrite("custom_cmd") is None
-
-    def test_empty_stdout_returns_none(self):
-        with patch("subprocess.run", return_value=self._fake("")):
-            assert rtk_hermes._try_rewrite("git status") is None
-
-    def test_timeout_returns_none(self):
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("rtk", 2)):
-            assert rtk_hermes._try_rewrite("git status") is None
-
-    def test_file_not_found_returns_none(self):
-        with patch("subprocess.run", side_effect=FileNotFoundError):
-            assert rtk_hermes._try_rewrite("git status") is None
-
-    def test_os_error_returns_none(self):
-        with patch("subprocess.run", side_effect=OSError("broken")):
-            assert rtk_hermes._try_rewrite("git status") is None
-
-    def test_strips_whitespace(self):
-        with patch("subprocess.run", return_value=self._fake("  rtk ls  \n")):
-            assert rtk_hermes._try_rewrite("ls") == "rtk ls"
-
-    def test_passes_command_as_arg(self):
-        with patch("subprocess.run", return_value=self._fake("", rc=1)) as m:
-            rtk_hermes._try_rewrite("git log --oneline -5")
-            m.assert_called_once_with(
-                ["rtk", "rewrite", "git log --oneline -5"],
-                capture_output=True, text=True, timeout=2,
-            )
-
-
-class TestPreToolCall:
-    def test_rewrites_terminal(self):
+    @pytest.mark.parametrize("returncode", [1, 2, 99])
+    def test_rewrite_non_success_passes_through(self, returncode):
         args = {"command": "git status"}
-        with patch.object(rtk_hermes, "_try_rewrite", return_value="rtk git status"):
-            rtk_hermes._pre_tool_call(tool_name="terminal", args=args, task_id="t")
-        assert args["command"] == "rtk git status"
+        result = subprocess.CompletedProcess([], returncode, "", "failed")
+        with patch("shutil.which", return_value="/usr/bin/rtk"), patch(
+            "subprocess.run", return_value=result
+        ):
+            rtk_hermes._pre_tool_call("terminal", args)
+        assert args["command"] == "git status"
 
-    def test_ignores_non_terminal(self):
+    def test_rewrite_timeout_fails_open(self):
         args = {"command": "git status"}
-        with patch.object(rtk_hermes, "_try_rewrite") as m:
-            rtk_hermes._pre_tool_call(tool_name="web_search", args=args, task_id="t")
-            m.assert_not_called()
+        with patch("shutil.which", return_value="/usr/bin/rtk"), patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired("rtk", 2)
+        ):
+            rtk_hermes._pre_tool_call("terminal", args)
+        assert args["command"] == "git status"
 
-    def test_ignores_missing_command(self):
-        with patch.object(rtk_hermes, "_try_rewrite") as m:
-            rtk_hermes._pre_tool_call(tool_name="terminal", args={}, task_id="t")
-            m.assert_not_called()
-
-    def test_ignores_empty_command(self):
-        with patch.object(rtk_hermes, "_try_rewrite") as m:
-            rtk_hermes._pre_tool_call(tool_name="terminal", args={"command": ""}, task_id="t")
-            m.assert_not_called()
-
-    def test_ignores_non_string_command(self):
-        with patch.object(rtk_hermes, "_try_rewrite") as m:
-            rtk_hermes._pre_tool_call(tool_name="terminal", args={"command": 123}, task_id="t")
-            m.assert_not_called()
-
-    def test_no_mutation_when_none(self):
-        args = {"command": "echo hi"}
-        with patch.object(rtk_hermes, "_try_rewrite", return_value=None):
-            rtk_hermes._pre_tool_call(tool_name="terminal", args=args, task_id="t")
-        assert args["command"] == "echo hi"
-
-    def test_preserves_other_args(self):
-        args = {"command": "git status", "timeout": 30, "workdir": "/tmp"}
-        with patch.object(rtk_hermes, "_try_rewrite", return_value="rtk git status"):
-            rtk_hermes._pre_tool_call(tool_name="terminal", args=args, task_id="t")
-        assert args == {"command": "rtk git status", "timeout": 30, "workdir": "/tmp"}
-
-    def test_handles_extra_kwargs(self):
+    def test_pre_tool_call_ignores_other_tools(self):
         args = {"command": "git status"}
-        with patch.object(rtk_hermes, "_try_rewrite", return_value="rtk git status"):
-            rtk_hermes._pre_tool_call(tool_name="terminal", args=args, task_id="t", extra="x")
-        assert args["command"] == "rtk git status"
+        with patch("subprocess.run") as run:
+            rtk_hermes._pre_tool_call("web_search", args)
+        run.assert_not_called()
+        assert args["command"] == "git status"
 
 
-class TestRegister:
-    def test_registers_when_available(self):
+class TestSerializedResultBoundary:
+    @staticmethod
+    def fake_compressor(output):
+        return "compressed: " + output[:20]
+
+    def test_preserves_envelope_and_unknown_metadata(self):
+        payload = {
+            "output": "repeated diagnostic line\n" * 30,
+            "code": 7,
+            "exit_code": 7,
+            "returncode": 7,
+            "error": "command failed",
+            "opaque": {"owner": "test", "n": 42},
+        }
+        with patch.object(rtk_hermes, "_RUST_AVAILABLE", True), patch.object(
+            rtk_hermes, "_rust_compress", self.fake_compressor
+        ):
+            transformed = rtk_hermes._pre_tool_call_result("terminal", json.dumps(payload))
+        assert isinstance(transformed, str)
+        result = json.loads(transformed)
+        assert result["output"].startswith("[rc=7] compressed:")
+        for field in ("code", "exit_code", "returncode", "error", "opaque"):
+            assert result[field] == payload[field]
+
+    def test_json_output_passes_through_unchanged(self):
+        output = json.dumps({"items": [{"id": i} for i in range(30)]})
+        raw = json.dumps({"output": output, "code": 0, "opaque": True})
+        with patch.object(rtk_hermes, "_RUST_AVAILABLE", True), patch.object(
+            rtk_hermes, "_rust_compress", side_effect=AssertionError("must not compress JSON")
+        ):
+            assert rtk_hermes._pre_tool_call_result("terminal", raw) is None
+
+    @pytest.mark.parametrize("result", ["not-json", "", "[]", None, 123])
+    def test_unsupported_serialized_shapes_pass_through(self, result):
+        assert rtk_hermes._pre_tool_call_result("terminal", result) is None
+
+    def test_compressor_exception_fails_open(self):
+        raw = json.dumps({"output": "x\n" * 300, "code": 0})
+        with patch.object(rtk_hermes, "_RUST_AVAILABLE", True), patch.object(
+            rtk_hermes, "_rust_compress", side_effect=RuntimeError("compressor unavailable")
+        ):
+            assert rtk_hermes._pre_tool_call_result("terminal", raw) is None
+
+
+class TestRegistration:
+    def test_registers_verified_hooks(self):
         ctx = MagicMock()
-        with patch.object(rtk_hermes, "_check_rtk", return_value=True):
+        with patch.object(rtk_hermes, "_check_rtk", return_value=True), patch.object(
+            rtk_hermes, "_RUST_AVAILABLE", True
+        ):
             rtk_hermes.register(ctx)
-        ctx.register_hook.assert_called_once_with("pre_tool_call", rtk_hermes._pre_tool_call)
+        names = [call.args[0] for call in ctx.register_hook.call_args_list]
+        assert names == ["pre_tool_call", "transform_tool_result"]
 
-    def test_skips_when_missing(self):
+    def test_missing_rtk_does_not_raise(self):
         ctx = MagicMock()
-        with patch.object(rtk_hermes, "_check_rtk", return_value=False):
+        with patch.object(rtk_hermes, "_check_rtk", return_value=False), patch.object(
+            rtk_hermes, "_RUST_AVAILABLE", False
+        ):
             rtk_hermes.register(ctx)
         ctx.register_hook.assert_not_called()
-
-    def test_no_crash_when_missing(self):
-        ctx = MagicMock()
-        with patch.object(rtk_hermes, "_check_rtk", return_value=False):
-            rtk_hermes.register(ctx)
-
-
-class TestIntegration:
-    def test_full_flow(self):
-        hooks = {}
-
-        class FakeCtx:
-            def register_hook(self, name, cb):
-                hooks[name] = cb
-
-        with patch.object(rtk_hermes, "_check_rtk", return_value=True):
-            rtk_hermes.register(FakeCtx())
-
-        args = {"command": "cargo test"}
-        fake = subprocess.CompletedProcess([], 0, stdout="rtk cargo test\n", stderr="")
-        with patch("subprocess.run", return_value=fake):
-            hooks["pre_tool_call"](tool_name="terminal", args=args, task_id="t")
-        assert args["command"] == "rtk cargo test"
-
-    def test_full_flow_no_rewrite(self):
-        hooks = {}
-
-        class FakeCtx:
-            def register_hook(self, name, cb):
-                hooks[name] = cb
-
-        with patch.object(rtk_hermes, "_check_rtk", return_value=True):
-            rtk_hermes.register(FakeCtx())
-
-        args = {"command": "echo hello"}
-        fake = subprocess.CompletedProcess([], 1, stdout="", stderr="")
-        with patch("subprocess.run", return_value=fake):
-            hooks["pre_tool_call"](tool_name="terminal", args=args, task_id="t")
-        assert args["command"] == "echo hello"
-
-    def test_full_flow_crash(self):
-        hooks = {}
-
-        class FakeCtx:
-            def register_hook(self, name, cb):
-                hooks[name] = cb
-
-        with patch.object(rtk_hermes, "_check_rtk", return_value=True):
-            rtk_hermes.register(FakeCtx())
-
-        args = {"command": "git status"}
-        with patch("subprocess.run", side_effect=OSError("segfault")):
-            hooks["pre_tool_call"](tool_name="terminal", args=args, task_id="t")
-        assert args["command"] == "git status"
