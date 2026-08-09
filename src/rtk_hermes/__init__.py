@@ -131,12 +131,12 @@ def _pre_tool_call(tool_name=None, args=None, **_kwargs):
 
 # ── Metrics (thread-safe) ──────────────────────────────────────────
 
-@dataclass(slots=True)
+@dataclass
 class RtkMetrics:
     """Thread-safe metrics for the rtk-rewrite plugin.
 
-    Uses `slots=True` so `_bump` cannot accidentally create ad-hoc
-    attributes via setattr on a typo — a missing field raises AttributeError.
+    The dataclass remains deliberately compatible with Python 3.9, the
+    package minimum; metric field names are still validated by _bump.
     """
     total_calls: int = 0
     total_rewrites: int = 0
