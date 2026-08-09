@@ -1,0 +1,10 @@
+name: rtk-rewrite
+version: "1.3.0"
+description: Fail-open Hermes adapter for RTK command rewriting and optional output compression.
+author: ether-btc
+hooks:
+  - pre_tool_call
+  - transform_tool_result
+provides_hooks:
+  - pre_tool_call
+  - transform_tool_result

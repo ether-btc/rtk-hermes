@@ -1,36 +1,33 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "rtk-hermes"
-version = "1.0.0"
-description = "RTK plugin for Hermes — rewrites shell commands for 60-90% LLM token savings"
+version = "1.3.0"
+description = "Fail-open Hermes adapter for RTK command rewriting and optional output compression"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.9"
-authors = [
-    {name = "rtk-ai", email = "info@rtk.sh"},
-    {name = "Vinicius Gallotti", email = "vinicius.gallotti@gmail.com"},
-]
+authors = [{name = "ether-btc"}]
 keywords = ["rtk", "hermes", "hermes-agent", "llm", "token-savings", "cli-proxy"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development :: Libraries",
 ]
 
 [project.urls]
-Homepage = "https://github.com/rtk-ai/rtk"
-Repository = "https://github.com/rtk-ai/rtk"
-Issues = "https://github.com/rtk-ai/rtk/issues"
+Homepage = "https://github.com/ether-btc/rtk-hermes"
+Repository = "https://github.com/ether-btc/rtk-hermes"
+Issues = "https://github.com/ether-btc/rtk-hermes/issues"
+RTK = "https://github.com/rtk-ai/rtk"
+Hermes = "https://github.com/NousResearch/hermes-agent"
 
 [project.entry-points."hermes_agent.plugins"]
 rtk-rewrite = "rtk_hermes:register"

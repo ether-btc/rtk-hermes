@@ -1,0 +1,100 @@
+name: RTK upstream compatibility
+
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/upstream-compat.yml'
+      - 'UPSTREAM.md'
+      - 'src/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  resolve-rtk:
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.release.outputs.latest }}
+    steps:
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh api repos/rtk-ai/rtk/releases/latest --jq .tag_name)"
+          test -n "$latest"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+  stable:
+    needs: resolve-rtk
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: host-baseline
+            rtk_ref: v0.42.4
+          - label: latest-release
+            rtk_ref: ${{ needs.resolve-rtk.outputs.latest }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install RTK
+        run: curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/${{ matrix.rtk_ref }}/install.sh | sh
+      - name: Show compatibility input
+        run: rtk --version
+      - name: Exercise real RTK rewrite boundary
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          result = subprocess.run(["rtk", "rewrite", "git status"], text=True, capture_output=True)
+          assert result.returncode in (0, 3), (result.returncode, result.stderr)
+          assert result.stdout.strip(), result
+          print(result.stdout.strip())
+          PY
+      - name: Run adapter gate
+        run: ./scripts/verify.sh
+
+  development:
+    needs: resolve-rtk
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install RTK development branch
+        run: curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/develop/install.sh | sh
+      - name: Run early-warning gate
+        run: ./scripts/verify.sh
+
+  report:
+    if: always() && (needs.stable.result == 'failure' || needs.development.result == 'failure')
+    needs: [stable, development, resolve-rtk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open or update compatibility issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ needs.resolve-rtk.outputs.latest }}
+          STABLE: ${{ needs.stable.result }}
+          DEVELOPMENT: ${{ needs.development.result }}
+        run: |
+          title="RTK compatibility check failed for ${LATEST}"
+          body="Automated weekly check: stable=${STABLE}, development=${DEVELOPMENT}. Review the workflow logs and update UPSTREAM.md/CHANGELOG.md after triage. This workflow does not deploy automatically."
+          existing="$(gh issue list --state open --search "in:title ${title}" --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
